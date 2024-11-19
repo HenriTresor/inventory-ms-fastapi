@@ -1,59 +1,84 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import uuid4
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base
-from config import settings
-
-DATABASE_URL = settings.DATABASE_URL
-engine = create_engine(DATABASE_URL)
-
-# Call declarative_base to create Base class
-Base = declarative_base()
+from sqlalchemy import create_engine, Column, String, Integer
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
 
 app = FastAPI()
 
-inventory_db = {}
+DATABASE_URL = "sqlite:///./test.db"  # Use SQLite for this example
 
-class Item(BaseModel):
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})  # SQLite specific argument
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+class Item(Base):
+    __tablename__ = "items"
+    id = Column(String, primary_key=True, index=True)
+    name = Column(String, index=True)
+    description = Column(String, nullable=True)
+    price = Column(Integer)
+    stock = Column(Integer)
+
+# Create the database tables
+Base.metadata.create_all(bind=engine)
+
+class ItemRequest(BaseModel):
     name: str
     description: Optional[str] = None
     price: float
     stock: int
 
-class ItemResponse(Item):
+class ItemResponse(ItemRequest):
     id: str
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 @app.post("/items/", response_model=ItemResponse)
-async def create_item(item: Item):
+async def create_item(item: ItemRequest, db: Session = Depends(get_db)):
     item_id = str(uuid4())
-    inventory_db[item_id] = item
-    return {**item.dict(), "id": item_id}
+    db_item = Item(id=item_id, **item.dict())
+    db.add(db_item)
+    db.commit()
+    db.refresh(db_item)
+    return db_item
 
 @app.get("/items/{item_id}", response_model=ItemResponse)
-async def get_item(item_id: str):
-    item = inventory_db.get(item_id)
-    if item is None:
+async def get_item(item_id: str, db: Session = Depends(get_db)):
+    db_item = db.query(Item).filter(Item.id == item_id).first()
+    if db_item is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    return {**item.dict(), "id": item_id}
+    return db_item
 
 @app.put("/items/{item_id}", response_model=ItemResponse)
-async def update_item(item_id: str, item: Item):
-    if item_id not in inventory_db:
+async def update_item(item_id: str, item: ItemRequest, db: Session = Depends(get_db)):
+    db_item = db.query(Item).filter(Item.id == item_id).first()
+    if db_item is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    inventory_db[item_id] = item
-    return {**item.dict(), "id": item_id}
+    for key, value in item.dict().items():
+        setattr(db_item, key, value)
+    db.commit()
+    db.refresh(db_item)
+    return db_item
 
 @app.delete("/items/{item_id}")
-async def delete_item(item_id: str):
-    if item_id not in inventory_db:
+async def delete_item(item_id: str, db: Session = Depends(get_db)):
+    db_item = db.query(Item).filter(Item.id == item_id).first()
+    if db_item is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    del inventory_db[item_id]
+    db.delete(db_item)
+    db.commit()
     return {"message": "Item deleted successfully"}
 
 @app.get("/items/", response_model=List[ItemResponse])
-async def get_inventory():
-    items = [{**item.dict(), "id": item_id} for item_id, item in inventory_db.items()]
+async def get_inventory(db: Session = Depends(get_db)):
+    items = db.query(Item).all()
     return items
