@@ -8,9 +8,9 @@ from sqlalchemy.orm import sessionmaker, Session
 
 app = FastAPI()
 
-DATABASE_URL = "sqlite:///./test.db"  # Use SQLite for this example
+DATABASE_URL = "sqlite:///./test.db"
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})  # SQLite specific argument
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
@@ -23,7 +23,7 @@ class Item(Base):
     price = Column(Integer)
     stock = Column(Integer)
 
-# Create the database tables
+
 Base.metadata.create_all(bind=engine)
 
 class ItemRequest(BaseModel):
